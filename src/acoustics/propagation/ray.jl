@@ -2,16 +2,19 @@ export Ray
 export RayModel
 
 "Equations 3.23-24 of Jensen, et al (2011)."
-function eikonal!(du, u, p, s, c::Function)
-    ∂c_∂x(x, z) = derivative(x -> c(x, z), x)
-    ∂c_∂z(x, z) = derivative(z -> c(x, z), z)
+function eikonal!(du, u, p, s, cel_fcn::Function)
+    ∂c_∂x(x, z) = derivative(x -> cel_fcn(x, z), x)
+    ∂c_∂z(x, z) = derivative(z -> cel_fcn(x, z), z)
 
-    x, z, ξ, ζ = u
+    τ, x, z, ξ, ζ = u
+    c = cel_fcn(x, z)
+    c² = c^2
 
-    du[1] = dx_ds = c(x, z) * ξ
-    du[2] = dz_ds = c(x, z) * ζ
-    du[3] = dξ_ds = -∂c_∂x(x, z) / c(x, z)^2
-    du[4] = dζ_ds = -∂c_∂z(x, z) / c(x, z)^2
+    du[1] = dτ_ds = 1 / c
+    du[2] = dx_ds = c * ξ
+    du[3] = dz_ds = c * ζ
+    du[4] = dξ_ds = -∂c_∂x(x, z) / c²
+    du[5] = dζ_ds = -∂c_∂z(x, z) / c²
 end
 
 struct Ray
@@ -25,18 +28,19 @@ struct Ray
 
         eikonal_local!(du, u, p, s) = eikonal!(du, u, p, s, c)
 
+        τ₀ = 0.0
         x₀ = scen.x
         z₀ = scen.z
         c₀ = c(x₀, z₀)
         ξ₀ = cos(θ₀) / c₀
         ζ₀ = sin(θ₀) / c₀
-        u₀ = [x₀, z₀, ξ₀, ζ₀]
+        u₀ = [τ₀, x₀, z₀, ξ₀, ζ₀]
 
         prob = ODEProblem(eikonal_local!, u₀, [0.0, 300e3])
         sol = solve(prob)
 
-        x(s) = sol(s, idxs = 1)
-        z(s) = sol(s, idxs = 2)
+        x(s) = sol(s, idxs = 2)
+        z(s) = sol(s, idxs = 3)
 
         s_max = sol.t[end]
 

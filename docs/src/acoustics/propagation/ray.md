@@ -1,9 +1,5 @@
 # Acoustic Ray Tracing
 
-```@docs
-OceanSonar.eikonal!
-```
-
 ```@example
 using OceanSonar
 using CairoMakie

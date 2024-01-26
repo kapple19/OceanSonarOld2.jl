@@ -36,14 +36,18 @@ function trace!(du, u, p, s, cel_fcn::Function)
 end
 
 struct Ray
-    s_max
+    s_vec
 
     x
     z
-    A
+    p
 
-    function Ray(scen::Scenario, θ₀::Real)
-        c = scen.env.ocn.cel.fun
+    point
+    tangent
+    normal
+
+    function Ray(scen::Scenario, θ₀::Real, δθ₀::Real, f::Real)
+        c(x, z) = scen.env.ocn.cel.fun(x, z)
 
         trace_local!(du, u, p, s) = trace!(du, u, p, s, c)
 
@@ -58,59 +62,152 @@ struct Ray
         q₀ = 0.0 # Eqn 3.63
         u₀ = [τ₀, x₀, z₀, ξ₀, ζ₀, real(p₀), imag(p₀), real(q₀), imag(q₀)]
 
-        prob = ODEProblem(trace_local!, u₀, [0.0, 300e3])
+        prob = ODEProblem(trace_local!, u₀, [0.0, 300e3]) # TODO: Terminating callback for max length of s.
         sol = solve(prob)
 
+        τ(s) = sol(s, idxs = 1)
         x(s) = sol(s, idxs = 2)
         z(s) = sol(s, idxs = 3)
+        ξ(s) = sol(s, idxs = 4)
+        ζ(s) = sol(s, idxs = 5)
         q(s) = sol(s, idxs = 8) + im * sol(s, idxs = 9)
         c(s) = c(x(s), z(s))
 
         # Note: The dynamic ray initial conditions (p₀, q₀) determine the ray amplitude equation for A(s).
         # See section 3.3.5.1 of Jensen, et al (2011).
+        # 
+        # Used in tandem with geometric beam tracing.
+        # The spacing δθ₀ must be accurately and consistently the difference between launch ray angles.
+        # See section 3.3.5.5 of Jensen, et al (2011).
+
+        # Equation 3.65 of Jensen, et al (2011).
         function A(s)
-            √(
-                c(s) * cos(θ₀) / (
-                    x * c₀ * q(s)
-                )
+            (
+                (
+                    c(s) * cos(θ₀) / (
+                        x(s) * c₀ * q(s)
+                    )
+                ) |> abs |> sqrt
             ) / 4π
         end
 
-        s_max = sol.t[end]
+        # Equation 3.74 of Jensen, et al (2011).
+        W(s::Real) = abs(q(s) * δθ₀)
 
-        new(s_max, x, z, A)
+        # Equation 3.73 of Jensen, et al (2011).
+        φ(s::Real, n::Real) = abs(n) > W(s) ? 0 : (W(s) - n) / W(s)
+
+        # Equation 3.72 of Jensen, et al (2011).
+        ω = 2π * f
+        P(s::Real, n::Real) = A(s) * φ(s, n) * exp(im * ω * τ(s))
+
+        s_vec = [sol.t; range(extrema(sol.t)..., 301)] |> unique |> sort
+
+        point(s) = [x(s), z(s)]
+        tangent(s) = [ξ(s), ζ(s)] / √(ξ(s)^2 + ζ(s)^2)
+        normal(s) = [-ζ(s), ξ(s)] / √(ξ(s)^2 + ζ(s)^2)
+
+        new(s_vec, x, z, P, point, tangent, normal)
     end
 end
 
 function MakieCore.convert_arguments(plot_type::MakieCore.PointBased, ray::Ray)
-    s = range(0.0, ray.s_max, 301)
-    MakieCore.convert_arguments(plot_type, ray.x.(s), ray.z.(s))
-end
-
-# function MakieCore.convert_arguments(plot_type::MakeCore.PointBased, rays::AbstractVector{<:Ray})
-#     Makie
-# end
-
-struct Beam
-
+    MakieCore.convert_arguments(plot_type, ray.x.(ray.s_vec), ray.z.(ray.s_vec))
 end
 
 function default_launch_angles(scen::Scenario)
     atan(1e3 / 10e3) * range(-1, 1, 7) # for Munk profile
 end
 
+function map_beams_to_grid(
+    rays::AbstractVector{<:Ray},
+    x_vec::AbstractVector{<:Real},
+    z_vec::AbstractVector{<:Real}
+)
+    Nx = length(x_vec)
+    p = zeros(ComplexF64, Nx, length(z_vec))
+    for ray in rays
+        s_vec = range(extrema(ray.s_vec)..., Nx ÷ 3)
+        for (i, s) in enumerate(s_vec[1:end-1])
+            ray_arc_segment = s_vec[i:i+1]
+            xlo, xhi = ray.x.(ray_arc_segment) |> extrema
+            
+            for nx in [nx for nx in eachindex(x_vec) if xlo ≤ x_vec[nx] < xhi]
+                x = x_vec[nx]
+                for (nz, z) in enumerate(z_vec)
+                    rcv_point = [x, z]
+
+                    displacement_transposed = (rcv_point - ray.point(s))'
+                    s = displacement_transposed * ray.tangent(s)
+                    n = abs(displacement_transposed * ray.normal(s))
+
+                    p[nx, nz] += ray.p(s, n)
+                end
+            end
+        end
+    end
+    return p
+end
+
+# function populate_grid!(p::AbstractMatrix{<:Complex}, ray, nx, nz, x, z)
+#     pcum = ComplexF64(0, 0)
+#     for i in eachindex(ray.s_vec[1:end-1])
+#         xlo, xhi = ray.x.(ray.s_vec[i:i+1]) |> extrema
+#         !(xlo ≤ x < xhi) && return
+#         rcv_point = [x, z]
+#         displacement_transposed = (rcv_point - ray.point(s))'
+#         s = displacement_transposed * ray.tangent(s)
+#         n = displacement_transposed * ray.normal(s) |> abs
+#         pcum += ray.p(s, n)
+#     end
+#     p[nx, nz] += pcum
+
+#     if nx == nz == 0
+#         return pcum
+#     end
+# end
+
 struct RayModel <: Propagation
     scen::Scenario
+    x_vec::Vector{Float64}
+    z_vec::Vector{Float64}
+    f::Float64
     rays::Vector{Ray}
+    p::Matrix{ComplexF64}
+    PL::Matrix{Float64}
 
-    function RayModel(scen::Scenario, launch_angles::AbstractVector{<:Real} = default_launch_angles(scen))
-        rays = [Ray(scen, θ₀) for θ₀ in launch_angles]
-        # TODO compute pressure field
+    function RayModel(
+        scen::Scenario,
+        x_vec::AbstractVector{<:Real},
+        z_vec::AbstractVector{<:Real},
+        f::Real,
+        launch_angles::AbstractVector{<:Real} = default_launch_angles(scen)
+    )
+        δθ₀ = launch_angles |> diff |> mean
+        rays = [Ray(scen, θ₀, δθ₀, f) for θ₀ in launch_angles]
+        
+        # p₀_abs = map_beams_to_grid(rays, [scen.x + 1.0], [scen.z])[1] |> abs
+        p = map_beams_to_grid(rays, x_vec, z_vec)
 
-        new(scen, rays)
+        # p₀_abs = populate_grid!()
+
+        # @show p₀_abs
+        # PL = -20log10.(abs.(p) / p₀_abs)
+        PL = -20log10.(p .|> abs)
+        # PL = min.(PL, 100.0)
+        # PL = max.(PL, 0.0)
+        PL[isnan.(PL)] .= 100.0
+
+        new(scen, x_vec, z_vec, f, rays, p, PL)
     end
 end
 
-function Propagation(::Val{:ray}, scen::Scenario)
-    RayModel(scen)
+function Propagation(::Val{:ray},
+    scen::Scenario,
+    x_vec::AbstractVector{<:Real},
+    z_vec::AbstractVector{<:Real},
+    f::Real,
+    launch_angles::AbstractVector{<:Real} = default_launch_angles(scen)
+)
+    RayModel(scen, x_vec, z_vec, f, launch_angles)
 end

@@ -23,7 +23,3 @@ TODO
 * [ ] GUI.
 * [ ] Remaining sonar equation models.
 * [ ] Remaining acoustic models.
-
-## Issues
-
-* Ray trace deviates.

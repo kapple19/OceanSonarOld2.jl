@@ -2,5 +2,5 @@ using OceanSonar
 using Test
 
 @testset "OceanSonar.jl" begin
-    # Write your tests here.
+    # TODO: reciprocity test
 end

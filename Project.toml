@@ -3,6 +3,11 @@ uuid = "c288b826-3e30-446a-9364-9aae0e64feb3"
 authors = ["Aaron Kaw <aaronjkaw@gmail.com>"]
 version = "1.0.0-DEV"
 
+[deps]
+DifferentialEquations = "0c46a032-eb83-5123-abaf-570d42b7fbaa"
+ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+MakieCore = "20f20a25-4f0e-4fdf-b5d1-57303727442b"
+
 [compat]
 julia = "1.9"
 
